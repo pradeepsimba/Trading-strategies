@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live + Historical Stock Data</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #111;
+      color: #eee;
+      padding: 20px;
+    }
+    h1 { color: #4caf50; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: #1e1e1e;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 0 10px #000;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 10px;
+      text-align: center;
+      color: white;
+    }
+    th {
+      background-color: #222;
+      color: #4caf50;
+    }
+    .updated {
+      animation: flash 1s ease;
+    }
+    @keyframes flash {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+    .positive { background-color: green; }
+    .negative { background-color: red; }
+    .neutral { background-color: #333; }
+    select, input, button {
+      margin: 5px;
+      padding: 5px;
+      background: #222;
+      color: #eee;
+      border: 1px solid #333;
+    }
+    button {
+      background: #4caf50;
+      cursor: pointer;
+    }
+    th span.neutral {
+      display: block;
+      margin-top: 3px;
+      font-size: 0.85em;
+      color: #bbb;
+    }
+    #globalSignal,#pointsreached {
+      text-transform: uppercase;
+      padding: 10px 15px;
+      border-radius: 8px;
+      display: inline-block;
+      background: #222;
+      margin-top: 10px;
+      font-size: 1.1em;
+      box-shadow: 0 0 8px rgba(0,0,0,0.5);
+    }
+    #globalSignal small {
+      display: block;
+      margin-top: 5px;
+      font-size: 0.85em;
+      opacity: 0.9;
+    }
+  </style>
+
+  
+
+</head>
+<body>
+  <h1 id="stock-title" style="position:relative;">
+  Live + Historical Stock Data 
+  (<span id="currenttimeshow" style="font-size: medium;color: #ffffffc9;"></span>)
+
+  <span id="dataSource1" 
+        style="position:absolute; left:50%; transform:translateX(-50%); font-size: small; color:#f11212c9;">
+  </span>
+
+  <span id="dataSource2" style="position:absolute; left:60%; transform:translateX(-60%); font-size: small; color:#f11212c9;"></span>
+</h1>
+  <label for="fromDate">From:</label>
+  <input type="date" id="fromDate" value="">
+  <label for="toDate">To:</label>
+  <input type="date" id="toDate" value="">
+  <label for="intervalSelect">Interval:</label>
+  <select id="intervalSelect">
+    
+    <option value="1m">1m</option>
+    <option value="3m">3m</option>
+    <option value="5m">5m</option>
+    <option value="15m">15m</option>
+    
+  </select>
+  <label for="candleCount">History offset:</label>
+  <input type="number" id="candleCount" value="0" min="0">
+  <label for="numCandles">Num Candles:</label>
+  <input type="number" id="numCandles" value="3" min="1" max="10">
+  <label>Global Signal</label>
+  <div id="globalSignal">Loading...</div>
+  <div id="pointsreached">Points reached...</div>
+
+  <table id="stockTable">
+    <thead id="tableHead">
+      <!-- Headers will be populated dynamically -->
+    </thead>
+    <tbody>
+      <!-- Rows will be populated here -->
+    </tbody>
+  </table>
+
+  <script>
+    const now = new Date();
+    const istTime = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+
+
+    var d1 = document.getElementById("dataSource1");
+    var d2 = document.getElementById("dataSource2");
+
+    function formatDate(date) {
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const hours = String(date.getUTCHours()).padStart(2, '0');
+      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+      return { year, month, day, hours, minutes, seconds };
+    }
+
+    const { year, month, day, hours, minutes, seconds } = formatDate(istTime);
+    const marketOpen = new Date(`${year}-${month}-${day}T09:15:00`).getTime();
+    const marketClose = new Date(`${year}-${month}-${day}T15:30:00`).getTime();
+    const currentTime = istTime.getTime();
+
+    const WS_URL = "ws://34.180.52.243:8083/historical-data";
+
+    const STOCKS = [
+      { "stockname": "BANKNIFTY", "stock_symbol": "26009"},
+      {"stockname": "HDFC BANK","stock_symbol": "1333"},
+      {"stockname": "KOTAK MAHINDRA BANK","stock_symbol": "1922"},
+      {"stockname": "ICICI BANK","stock_symbol": "4963"},
+      {"stockname": "AXIS BANK","stock_symbol": "5900"},
+      {"stockname": "STATE BANK OF INDIA","stock_symbol": "3045"},
+      {"stockname": "INDUSIND BANK","stock_symbol": "5258"},
+      {"stockname": "AU SMALL FINANCE BANK","stock_symbol": "21238"},
+      {"stockname": "FEDERAL BANK","stock_symbol": "1023"},
+      {"stockname": "IDFC FIRST BANK","stock_symbol": "11184"},
+      {"stockname": "PUNJAB NATIONAL BANK","stock_symbol": "10666"},
+      {"stockname": "CANARA BANK","stock_symbol": "10794"}
+    ];
+
+    let selectedInterval = "1m";
+    let candleCount = 0;
+    let numCandles = 3;
+    let lastNCandles = {};
+    let socket;
+
+    // === NIFTY BANK WEIGHTS (as of Oct 30, 2025) ===
+    const INDEX_WEIGHTS = {
+      "1333": 31.86,   // HDFC BANK
+      "4963": 20.14,   // ICICI BANK
+      "3045": 17.83,   // SBI
+      "1922": 8.79,    // KOTAK
+      "5900": 7.96,    // AXIS
+      "5258": 2.92,    // INDUSIND
+      "10666": 2.86,   // PNB
+      "10794": 2.40,   // CANARA
+      "11184": 1.40,   // IDFC FIRST
+      "21238": 1.35,   // AU SMALL
+      "1023": 1.19     // FEDERAL
+    };
+
+    // === NEW: Signal locking variables ===
+    let currentCandleTime = null;
+    let signalLocked = false;
+
+    function formatToTwoDecimals(num) {
+      if (typeof num !== 'number' || isNaN(num)) return 'N/A';
+      const truncated = Math.floor(num * 100) / 100;
+      return truncated.toFixed(2);
+    }
+
+    function formatTime(startTime) {
+      if (!startTime) return '';
+      const date = new Date(startTime);
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      return `${hours}.${minutes}`;
+    }
+
+    function parseBuySellQty(snap) {
+      const buyQtyMatch = snap.match(/BuyQty (\d+)/);
+      const sellQtyMatch = snap.match(/SellQty (\d+)/);
+      return {
+        buyQty: buyQtyMatch ? buyQtyMatch[1] : 'N/A',
+        sellQty: sellQtyMatch ? sellQtyMatch[1] : 'N/A'
+      };
+    }
+
+    function getClassAndContent(candle) {
+      if (!candle.close || !candle.open) return { className: 'neutral', content: 'N/A' };
+      const diff = candle.close - candle.open;
+      const formatted = formatToTwoDecimals(diff);
+      const className = diff > 0 ? 'positive' : diff < 0 ? 'negative' : 'neutral';
+      return { className, content: formatted };
+    }
+
+    function calculateDates() {
+      let interval_minutes = 1;
+      if (selectedInterval === '3m') interval_minutes = 3;
+      else if (selectedInterval === '5m') interval_minutes = 5;
+      else if (selectedInterval === '15m') interval_minutes = 15;
+
+      const totalCandles = numCandles + candleCount;
+      const totalMinutes = totalCandles * interval_minutes;
+
+      let effectiveCurrentTime;
+      if (currentTime > marketClose) {
+        effectiveCurrentTime = new Date(`${year}-${month}-${day}T15:30:00`);
+      } else {
+        effectiveCurrentTime = new Date(istTime);
+      }
+
+      const snappedTime = new Date(effectiveCurrentTime);
+      const mins = snappedTime.getMinutes();
+      const snappedMinutes = Math.floor(mins / interval_minutes) * interval_minutes;
+      snappedTime.setMinutes(snappedMinutes, 0, 0);
+
+      const fromTime = new Date(snappedTime.getTime() - totalMinutes * 60 * 1000);
+
+      function formatDate1(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return { year, month, day, hours, minutes, seconds };
+      }
+
+      const fromFmt = formatDate1(fromTime);
+      const toFmt = formatDate1(snappedTime);
+
+      const fromDate = `${fromFmt.year}-${fromFmt.month}-${fromFmt.day}T${fromFmt.hours}:${fromFmt.minutes}:00`;
+      const toDate = `${toFmt.year}-${toFmt.month}-${toFmt.day}T${toFmt.hours}:${toFmt.minutes}:00`;
+
+      return { fromDate, toDate };
+    }
+
+    document.getElementById("intervalSelect").addEventListener("change", (e) => {
+      selectedInterval = e.target.value;
+      fetchHistoricalData();
+    });
+
+    document.getElementById("candleCount").addEventListener("input", (e) => {
+      candleCount = parseInt(e.target.value) || 0;
+      fetchHistoricalData();
+    });
+
+    document.getElementById("numCandles").addEventListener("input", (e) => {
+      numCandles = Math.min(Math.max(parseInt(e.target.value) || 3, 1), 10);
+      e.target.value = numCandles;
+      fetchHistoricalData();
+    });
+
+
+
+    async function fetchHistoricalData() {
+      const { fromDate, toDate } = calculateDates();
+      const API_BASE_URL = `https://34.180.52.243:8000/api/historical-data/?from_date=${fromDate}&to_date=${toDate}`;
+
+      const payload = STOCKS.map(stock => ({
+        ...stock,
+        intervals: [selectedInterval]
+      }));
+
+      try {
+        const response = await fetch(API_BASE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        data.forEach(stock => {
+
+          console.log(data);
+          const intervalKey = `${selectedInterval} data`;
+          const intervalData = stock[intervalKey] || [];
+          const displayCandles = candleCount === 0 
+            ? intervalData.slice(-numCandles) 
+            : intervalData.slice(-(numCandles + candleCount), -(candleCount));
+          lastNCandles[stock.stock_symbol] = displayCandles;
+        });
+
+        renderTable();
+        
+
+        if (candleCount === 0) {
+          initWebSocket();
+
+            d1.textContent = "😊 API working";
+            d1.style.color = "green";
+            d1.style.fontWeight = "bold";
+
+        } else {
+          if (socket) {
+            socket.close();
+            socket = null;
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching data:", error);
+
+      // If fail
+      d1.textContent = "❌ API Server not responding";
+      d1.style.color = "red";
+      d1.style.fontWeight = "bold";
+      }
+    }
+
+    function renderTable() {
+      const thead = document.getElementById("tableHead");
+      const tbody = document.querySelector("#stockTable tbody");
+      tbody.innerHTML = "";
+
+      let headerHTML = '<tr><th>Stock Name</th>';
+      for (let i = numCandles - 1; i >= 0; i--) {
+        const label = i === numCandles - 1 ? 'Latest' : i === numCandles - 2 ? 'Previous' : i === numCandles - 3 ? 'PrevPrev' : `Prev${i}`;
+        headerHTML += `<th>${label} (o-c)<br><span id="timeCandle${i}" class="neutral">00</span><br><span id="countCandle${i}" class="neutral">g:0 r:0 n:0</span></th>`;
+      }
+      headerHTML += '<th>BuyQtyPending</th><th>SellQtyPending</th></tr>';
+      thead.innerHTML = headerHTML;
+
+      STOCKS.forEach(stock => {
+        const row = document.createElement("tr");
+        row.id = `row-${stock.stock_symbol}`;
+
+        const candles = lastNCandles[stock.stock_symbol] || [];
+        for (let i = 0; i < numCandles; i++) {
+          const candle = candles[i] || {};
+          document.getElementById(`timeCandle${i}`).textContent = candle.start_time ? ` (${formatTime(candle.start_time)})` : '00';
+        }
+
+        let rowHTML = `<td>${stock.stockname} (${stock.stock_symbol})</td>`;
+        for (let i = numCandles - 1; i >= 0; i--) {
+          const candle = candles[i] || {};
+          const data = getClassAndContent(candle);
+          rowHTML += `<td id="candle${i}-${stock.stock_symbol}" class="${data.className}">${data.content}</td>`;
+        }
+        rowHTML += `<td id="buyqty-${stock.stock_symbol}" class="neutral">N/A</td><td id="sellqty-${stock.stock_symbol}" class="neutral">N/A</td>`;
+
+        row.innerHTML = rowHTML;
+        tbody.appendChild(row);
+      });
+      updateColumnCounts();
+    }
+
+    function initWebSocket() {
+      if (socket) socket.close();
+      socket = new WebSocket(WS_URL);
+
+      socket.onopen = function() {
+        const filters = STOCKS.map(stock => ({
+          stock_symbol: stock.stock_symbol,
+          stockname: stock.stockname,
+          interval: selectedInterval
+        }));
+        socket.send(JSON.stringify({
+          type: "LIVE_FEED_INIT",
+          filters: filters,
+          latestOnly: true
+        }));
+      };
+
+      socket.onmessage = function(event) {
+        const updates = JSON.parse(event.data);
+
+        //console.log(updates);
+        updates.forEach(update => applyLiveUpdate(update));
+      };
+
+      socket.onclose = () => console.log("WebSocket closed.");
+      socket.onerror = (e) => console.error("WebSocket error:", e);
+    }
+
+    // === MODIFIED: applyLiveUpdate with candle close detection ===
+    function applyLiveUpdate(update) {
+
+      //console.log('Live update received:', update);
+      if (update.interval !== selectedInterval || candleCount > 0) return;
+
+      const stockSymbol = update.stock_symbol;
+      if (!lastNCandles[stockSymbol]) lastNCandles[stockSymbol] = [];
+
+      const candles = lastNCandles[stockSymbol];
+      const newCandle = {
+        start_time: update.start_time,
+        open: update.open,
+        close: update.close
+      };
+
+      const existingIndex = candles.findIndex(c => c.start_time === update.start_time);
+      if (existingIndex >= 0) {
+        candles[existingIndex] = newCandle;
+      } else {
+        candles.push(newCandle);
+        if (candles.length > numCandles) candles.shift();
+      }
+
+      // === UPDATE VISUALS ONLY ===
+      for (let i = 0; i < numCandles; i++) {
+        const candle = candles[i] || {};
+        document.getElementById(`timeCandle${i}`).textContent = candle.start_time ? ` (${formatTime(candle.start_time)})` : '00';
+        const cell = document.getElementById(`candle${i}-${stockSymbol}`);
+
+        //console.log(candle);
+        const data = getClassAndContent(candle);
+        cell.className = data.className;
+        cell.textContent = data.content;
+        if (cell.textContent !== 'N/A') {
+          cell.classList.add("updated");
+          setTimeout(() => cell.classList.remove("updated"), 1000);
+        }
+      }
+
+      
+
+      const { buyQty, sellQty } = parseBuySellQty(update.snap);
+      const buyQtyCell = document.getElementById(`buyqty-${stockSymbol}`);
+      const sellQtyCell = document.getElementById(`sellqty-${stockSymbol}`);
+      buyQtyCell.textContent = buyQty;
+      sellQtyCell.textContent = sellQty;
+      if (buyQty !== 'N/A') buyQtyCell.classList.add("updated");
+      if (sellQty !== 'N/A') sellQtyCell.classList.add("updated");
+      setTimeout(() => {
+        buyQtyCell.classList.remove("updated");
+        sellQtyCell.classList.remove("updated");
+      }, 1500);
+
+      updateColumnCounts();
+
+
+       // === NIFTY BANK ALERT CHECK ===
+      if (stockSymbol === "26009" && newCandle.open && newCandle.close) {
+        const signedDiff = newCandle.close - newCandle.open;
+        const diff = Math.abs(newCandle.close - newCandle.open);
+        let threshold = 0;
+        if (selectedInterval === "1m") threshold = 20;
+        else if (selectedInterval === "3m") threshold = 25;
+        else if (selectedInterval === "5m") threshold = 30;
+        else if (selectedInterval === "15m") threshold = 70;
+        if (diff >= threshold && currentCandleTime !== update.start_time) {
+          //window.alert(`🚨 NIFTY BANK Alert: Open-Close crossed ${threshold} points (${diff.toFixed(2)} pts) at ${formatTime(update.start_time)}`);
+          // Optional: Log to console for debugging
+          console.log(`NIFTY BANK Alert: ${diff.toFixed(2)} pts at ${update.start_time}`);
+
+          const direction = signedDiff > 0 ? "Positive (Bullish)" : "Negative (Bearish)";
+           const color = signedDiff > 0 ? "#12eb12" : "#f40909";//green:red
+          document.getElementById('pointsreached').innerHTML = `
+            <span style="color: ${color}; font-weight: bold;">
+              🚨 NIFTY BANK: O-C crossed ${threshold} points (${diff.toFixed(2)} pts) at ${formatTime(update.start_time)}
+            </span>
+          `;
+        }
+      }
+      // === TRIGGER SIGNAL ONLY ON CANDLE CLOSE ===
+      const now = new Date();
+      const candleEnd = new Date(update.start_time);
+      if (selectedInterval === "1m") candleEnd.setMinutes(candleEnd.getMinutes() + 1);
+      else if (selectedInterval === "3m") candleEnd.setMinutes(candleEnd.getMinutes() + 3);
+      else if (selectedInterval === "5m") candleEnd.setMinutes(candleEnd.getMinutes() + 5);
+      else if (selectedInterval === "15m") candleEnd.setMinutes(candleEnd.getMinutes() + 15);
+
+
+      
+
+      // === TRIGGER SIGNAL ONLY ON CANDLE CLOSE ===
+      
+      candleEnd.setMinutes(candleEnd.getMinutes() + 1);
+
+      if (now >= candleEnd && currentCandleTime !== update.start_time) {
+        currentCandleTime = update.start_time;
+        setTimeout(() => {
+          //updateColumnCounts();
+          lockSignalForOneMinute();
+        }, 100);
+      }
+
+    }
+
+    // === NEW: Lock signal for 60 seconds ===
+    function lockSignalForOneMinute() {
+      if (signalLocked) return;
+      signalLocked = true;
+      setTimeout(() => { signalLocked = false; }, 1000);//60000
+    }
+
+    function updateColumnCounts() {
+      const counts = {};
+      for (let i = 0; i < numCandles; i++) {
+        counts[i] = { g: 0, r: 0, n: 0 };
+      }
+
+      STOCKS.forEach(stock => {
+        const candles = lastNCandles[stock.stock_symbol] || [];
+        for (let i = 0; i < numCandles; i++) {
+          const candle = candles[i] || {};
+          if (!candle.open || !candle.close) {
+            counts[i].n++;
+          } else if (candle.close > candle.open) {
+            counts[i].g++;
+          } else if (candle.close < candle.open) {
+            counts[i].r++;
+          } else {
+            counts[i].n++;
+          }
+        }
+      });
+
+      for (let i = 0; i < numCandles; i++) {
+        document.getElementById(`countCandle${i}`).textContent = 
+          `g:${counts[i].g} r:${counts[i].r} n:${counts[i].n}`;
+      }
+
+      // === ONLY UPDATE SIGNAL IF NOT LOCKED ===
+      if (!signalLocked) {
+        updateGlobalSignal(counts);
+      }
+    }
+
+    function updateGlobalSignal(counts) {
+
+      //console.log('Counts:', counts);
+      const signalBox = document.getElementById("globalSignal");
+
+      // === 1. Count-based signal ===
+      let totalGreen = 0, totalRed = 0;
+      for (let i = 0; i < numCandles; i++) {
+        totalGreen += counts[i].g;
+        totalRed   += counts[i].r;
+      }
+
+      const allGreen = Array.from({length: numCandles}, (_, i) => counts[i].g >= 4).every(Boolean);
+      const allRed   = Array.from({length: numCandles}, (_, i) => counts[i].r >= 5).every(Boolean);
+
+      let countSignal = "NEUTRAL";
+      let countColor  = "#777";
+      if (allGreen) { countSignal = "BUY";  countColor = "green"; }
+      else if (allRed) { countSignal = "SELL"; countColor = "red"; }
+
+      // === 2. Weighted % prediction (Latest candle) ===
+      const latestCandles = {};
+      STOCKS.forEach(s => {
+        const arr = lastNCandles[s.stock_symbol] || [];
+        latestCandles[s.stock_symbol] = arr[0]; // index 0 = newest
+      });
+
+      let weightedPct = 0;
+      let totalWeight = 0;
+
+      for (const sym in INDEX_WEIGHTS) {
+        const w = INDEX_WEIGHTS[sym] / 100;
+        const candle = latestCandles[sym];
+        const pct = candle && candle.open && candle.close 
+          ? ((candle.close - candle.open) / candle.open) * 100 
+          : 0;
+        weightedPct += w * pct;
+        totalWeight += w;
+      }
+      weightedPct = totalWeight ? weightedPct / totalWeight : 0;
+
+      const bnCandle = latestCandles["26009"];
+      const bnLevel  = bnCandle ? bnCandle.close : null;
+      const points = bnLevel ? Math.round(weightedPct / 100 * bnLevel) : null;
+
+      // === 3. Final Signal Logic ===
+      let finalSignal = countSignal;
+      let finalColor  = countColor;
+
+      if (Math.abs(weightedPct) > 0.08) { // > ±0.08% on index
+        finalSignal = weightedPct > 0 ? "STRONG BUY" : "STRONG SELL";
+        finalColor  = weightedPct > 0 ? "#00ff00" : "#ff0000";
+      }
+
+      // signalBox.innerHTML = `
+      //   GLOBAL SIGNAL: <span style="color:${finalColor};font-weight:bold;">${finalSignal}</span>
+      //   <br>
+      //   <small>
+      //     Count: <span style="color:${countColor}">${countSignal}</span> | 
+      //     Weighted: ${weightedPct > 0 ? '+' : ''}${weightedPct.toFixed(3)}% 
+      //     ${points !== null ? `(≈ ${points > 0 ? '+' : ''}${points} pts)` : ''}
+      //   </small>
+      // `;
+
+      const latestCandle = Object.values(lastNCandles)
+      .flatMap(arr => arr)
+      .filter(c => c && c.start_time)
+      .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))[0];
+
+      const candleTime = latestCandle ? formatTime(latestCandle.start_time) : '';
+
+      signalBox.innerHTML = `
+        GLOBAL SIGNAL: <span style="color:${finalColor};font-weight:bold;">
+          ${finalSignal}${candleTime ? ` (${candleTime})` : ''}
+        </span>
+        <br>
+        <small>
+          Count: <span style="color:${countColor}">${countSignal}</span> | 
+          Weighted: ${weightedPct > 0 ? '+' : ''}${weightedPct.toFixed(3)}% 
+          ${points !== null ? `(≈ ${points > 0 ? '+' : ''}${points} pts)` : ''}
+        </small>
+      `;
+    }
+
+    function updateTime() {
+      const currentTimeupdate = new Date();
+      document.getElementById("currenttimeshow").textContent = currentTimeupdate.toLocaleString(); 
+    }
+
+    updateTime();
+    setInterval(updateTime, 1000);
+
+    // Initial load
+    fetchHistoricalData();
+  </script>
+
+  <script>
+  // const API_BASE_URL = "https://example.com/api"; // change to your API
+  // const WS_URL = "wss://example.com/ws"; // change to your WebSocket URL
+
+  async function checkConnections() {
+    // show "Working..." while checking
+    document.getElementById("dataSource1").textContent = "Checking API... ⏳";
+    document.getElementById("dataSource2").textContent = "Checking WebSocket... ⏳";
+
+   // console.log(API_BASE_URL);
+
+    // // 1️⃣ Check API
+    // try {
+    //   const response = await fetch(API_BASE_URL);
+    //   if (response.ok) {
+    //     document.getElementById("dataSource1").textContent = "✅ API Server is Working";
+    //   } else {
+    //     throw new Error("API Error");
+    //   }
+    // } catch (error) {
+    //   document.getElementById("dataSource1").textContent = "❌ API Server is not responding";
+    // }
+
+    // 2️⃣ Check WebSocket
+    try {
+      const ws = new WebSocket(WS_URL);
+      
+      ws.onopen = () => {
+        document.getElementById("dataSource2").textContent = "✅ WebSocket Connected";
+
+            d2.textContent = "😊 WebSocket working";
+            d2.style.color = "green";
+            d2.style.fontWeight = "bold";
+
+
+        ws.close();
+      };
+
+      ws.onerror = () => {
+        document.getElementById("dataSource2").textContent = "❌ WebSocket Server is not responding";
+      };
+
+    } catch (error) {
+      document.getElementById("dataSource2").textContent = "❌ WebSocket initialization failed";
+    }
+  }
+
+  // Call function after page load
+  window.onload = checkConnections;
+</script>
+
+
+<script>
+
+
+/* =======================================================
+   SUPPORT & RESISTANCE FINDER (5m and 15m)
+   ======================================================= */
+
+function calculateSRDates() {
+  const now = new Date();
+
+  const fromDateObj = new Date(now);
+  fromDateObj.setDate(fromDateObj.getDate() - 7); // go 7 days back
+
+  const toDateObj = new Date(now);
+  toDateObj.setDate(toDateObj.getDate() + 1); // go 1 day ahead
+
+  const fromDate = fromDateObj.toISOString().split("T")[0];
+  const toDate = toDateObj.toISOString().split("T")[0];
+
+  return { fromDate, toDate };
+}
+
+async function findSupportResistance() {
+  console.log("📊 Fetching 5m and 15m data for Support/Resistance detection...");
+
+  const intervals = ["5m", "15m"];
+  const results = {};
+
+  for (const interval of intervals) {
+    const { fromDate, toDate } = calculateSRDates(); // reuse your existing function
+
+    console.log(`⏳ Fetching ${interval} data from ${fromDate} to ${toDate}...`);
+    const API_BASE_URL = `https://34.180.52.243:8000/api/historical-data/?from_date=${fromDate}&to_date=${toDate}`;
+    const payload = STOCKS.map(stock => ({
+      ...stock,
+      intervals: [interval]
+    }));
+
+    try {
+      const response = await fetch(API_BASE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      results[interval] = {};
+
+      data.forEach(stock => {
+        const intervalKey = `${interval} data`;
+        const candles = stock[intervalKey] || [];
+        const { supports, resistances } = detectSupportResistance(candles);
+        results[interval][stock.stockname] = { supports, resistances };
+      });
+
+    } catch (err) {
+      console.error(`❌ Error fetching ${interval} data:`, err);
+    }
+  }
+
+  console.log("✅ Support/Resistance Summary:");
+  console.log(results);
+
+  // Optional: Display in Table
+  displaySupportResistance(results);
+}
+
+/* -------------------------------------------------------
+   Detect local minima (support) & maxima (resistance)
+   ------------------------------------------------------- */
+function detectSupportResistance(candles) {
+
+  console.log(candles);
+  const supports = [];
+  const resistances = [];
+
+  for (let i = 2; i < candles.length - 2; i++) {
+    const p2 = candles[i - 2].close, p1 = candles[i - 1].close;
+    const c = candles[i].close, n1 = candles[i + 1].close, n2 = candles[i + 2].close;
+
+    if (c < p1 && c < p2 && c < n1 && c < n2) supports.push(c);
+    if (c > p1 && c > p2 && c > n1 && c > n2) resistances.push(c);
+  }
+
+  const clusteredSupports = clusterLevels(supports, 0.25);
+  const clusteredResistances = clusterLevels(resistances, 0.25);
+
+  return {
+    supports: clusteredSupports.slice(-3),       // last 3 key supports
+    resistances: clusteredResistances.slice(-3)  // last 3 key resistances
+  };
+}
+
+/* -------------------------------------------------------
+   Cluster nearby price levels (within threshold %)
+   ------------------------------------------------------- */
+function clusterLevels(levels, threshold = 0.2) {
+  if (!levels.length) return [];
+  levels.sort((a, b) => a - b);
+  const clusters = [];
+  let group = [levels[0]];
+
+  for (let i = 1; i < levels.length; i++) {
+    if (Math.abs(levels[i] - levels[i - 1]) / levels[i - 1] < threshold / 100) {
+      group.push(levels[i]);
+    } else {
+      clusters.push(average(group));
+      group = [levels[i]];
+    }
+  }
+  clusters.push(average(group));
+  return clusters;
+}
+
+function average(arr) {
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+/* -------------------------------------------------------
+   Display Support/Resistance data in table (optional)
+   ------------------------------------------------------- */
+function displaySupportResistance(results) {
+  const table = document.getElementById("stockTable");
+  let srDiv = document.getElementById("srZone");
+
+  if (!srDiv) {
+    srDiv = document.createElement("div");
+    srDiv.id = "srZone";
+    srDiv.style.marginTop = "20px";
+    srDiv.style.padding = "10px";
+    srDiv.style.background = "#1a1a1a";
+    srDiv.style.borderRadius = "10px";
+    srDiv.style.color = "#fff";
+    srDiv.style.boxShadow = "0 0 10px #000";
+    table.insertAdjacentElement("afterend", srDiv);
+  }
+
+  let html = `<h3 style="color:#4caf50;">Support & Resistance (5m / 15m)</h3>`;
+  html += `<table style="width:100%; border-collapse:collapse; color:#fff;">
+             <tr><th>Stock</th><th>5m Support</th><th>5m Resistance</th>
+             <th>15m Support</th><th>15m Resistance</th></tr>`;
+
+  STOCKS.forEach(s => {
+    const d5 = results["5m"]?.[s.stockname] || {};
+    const d15 = results["15m"]?.[s.stockname] || {};
+    html += `<tr>
+      <td>${s.stockname}</td>
+      <td>${(d5.supports || []).map(v => v.toFixed(2)).join(", ") || '-'}</td>
+      <td>${(d5.resistances || []).map(v => v.toFixed(2)).join(", ") || '-'}</td>
+      <td>${(d15.supports || []).map(v => v.toFixed(2)).join(", ") || '-'}</td>
+      <td>${(d15.resistances || []).map(v => v.toFixed(2)).join(", ") || '-'}</td>
+    </tr>`;
+  });
+
+  html += "</table>";
+  srDiv.innerHTML = html;
+}
+
+/* -------------------------------------------------------
+   Run Automatically after Data Loaded
+   ------------------------------------------------------- */
+setTimeout(findSupportResistance, 3000); // wait 5s after page load
+
+
+document.getElementById("intervalSelect").addEventListener("change", (e) => {
+      selectedInterval = e.target.value;
+      findSupportResistance();
+    });
+
+</script>
+
+</body>
+</html>
