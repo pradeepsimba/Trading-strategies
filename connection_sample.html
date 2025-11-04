@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📊 Live + Historical Stock Data</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #111;
+      color: #eee;
+      padding: 20px;
+    }
+    h1 { color: #4caf50; }
+    .stock-card {
+      background: #1e1e1e;
+      padding: 20px;
+      margin-bottom: 20px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px #000;
+    }
+    .interval-section {
+      margin-top: 10px;
+      border-top: 1px solid #333;
+      padding-top: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 6px 8px;
+      text-align: center;
+    }
+    th { background-color: #222; }
+    .updated {
+      background-color: #263238;
+      animation: flash 1s ease;
+    }
+    @keyframes flash {
+      0% { background-color: #263238; }
+      100% { background-color: transparent; }
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 Live + Historical Stock Data</h1>
+  <button id="loadBtn">Load Historical Data</button>
+  <div id="dataContainer"></div>
+
+  <script>
+    const API_URL = "https://34.180.52.243:8000/api/historical-data/?from_date=2025-11-04T9:15:00&to_date=2025-11-04T15:30:00";
+    const WS_URL  = "ws://34.180.52.243:8083/historical-data";
+
+    const PAYLOAD = [
+      {
+        "stockname": "HDFC BANK",
+        "stock_symbol": "1333",
+        "intervals": ["1m","3m","5m"] // You can add more
+      },
+      {
+        "stockname": "KOTAK MAHINDRA BANK",
+        "stock_symbol": "1922",
+        "intervals": ["1m","3m","5m"] // You can add more
+      }
+    ];
+
+    let globalData = []; // store historical + live updates
+
+    // ✅ Fetch initial historical data
+    async function fetchHistoricalData() {
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(PAYLOAD)
+        });
+
+        const data = await response.json();
+        console.log("Historical Response:", data);
+        globalData = data;
+        renderData(data);
+
+        // Connect WebSocket after historical load
+        initWebSocket();
+      } catch (error) {
+        console.error("Error fetching data:", error);
+      }
+    }
+
+    // ✅ Render historical data
+    function renderData(data) {
+      const container = document.getElementById("dataContainer");
+      container.innerHTML = "";
+
+      data.forEach(stock => {
+        const stockDiv = document.createElement("div");
+        stockDiv.classList.add("stock-card");
+        stockDiv.id = `stock-${stock.stock_symbol}`;
+
+        stockDiv.innerHTML = `
+          <h2>${stock.stockname.toUpperCase()} (${stock.stock_symbol})</h2>
+          <p><strong>Intervals:</strong> ${stock.intervals.join(", ")}</p>
+        `;
+
+        stock.intervals.forEach(interval => {
+          const intervalKey = `${interval} data`;
+          const intervalData = stock[intervalKey] || [];
+
+          const intervalSection = document.createElement("div");
+          intervalSection.classList.add("interval-section");
+          intervalSection.id = `interval-${stock.stock_symbol}-${interval}`;
+          intervalSection.innerHTML = `<h3>${interval}</h3>`;
+
+          if (intervalData.length === 0) {
+            intervalSection.innerHTML += `<p>No data found.</p>`;
+          } else {
+            const table = document.createElement("table");
+            table.innerHTML = `
+              <thead>
+                <tr>
+                  <th>Start Time</th>
+                  <th>Open</th>
+                  <th>High</th>
+                  <th>Low</th>
+                  <th>Close</th>
+                  <th>Volume</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${intervalData.map(item => `
+                  <tr id="row-${stock.stock_symbol}-${interval}-${item.start_time}">
+                    <td>${item.start_time}</td>
+                    <td>${item.open}</td>
+                    <td>${item.high}</td>
+                    <td>${item.low}</td>
+                    <td>${item.close}</td>
+                    <td>${item.volume}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            `;
+            intervalSection.appendChild(table);
+          }
+
+          stockDiv.appendChild(intervalSection);
+        });
+
+        container.appendChild(stockDiv);
+      });
+    }
+
+    // ✅ Initialize WebSocket
+    function initWebSocket() {
+      const socket = new WebSocket(WS_URL);
+
+      socket.onopen = function() {
+        console.log("WebSocket connected.");
+        socket.send(JSON.stringify({
+        type: "LIVE_FEED_INIT",
+        filters: [
+            { stock_symbol: "1333", stockname: "HDFC BANK", interval: "1m" },
+            { stock_symbol: "1333", stockname: "HDFC BANK", interval: "3m" },
+            { stock_symbol: "1333", stockname: "HDFC BANK", interval: "5m" },
+            { stock_symbol: "1922", stockname: "KOTAK MAHINDRA BANK", interval: "1m" },
+            { stock_symbol: "1922", stockname: "KOTAK MAHINDRA BANK", interval: "3m" },
+            { stock_symbol: "1922", stockname: "KOTAK MAHINDRA BANK", interval: "5m" }
+        ],
+        latestOnly: true
+        }));
+      };
+
+      socket.onmessage = function(event) {
+        const updates = JSON.parse(event.data);
+        console.log("Live update:", updates);
+        updates.forEach(update => applyLiveUpdate(update));
+      };
+
+      socket.onclose = () => console.log("WebSocket closed.");
+      socket.onerror = (e) => console.error("WebSocket error:", e);
+    }
+
+    // ✅ Update table when live data arrives
+    function applyLiveUpdate(update) {
+      const intervalId = `interval-${update.stock_symbol}-${update.interval}`;
+      const section = document.getElementById(intervalId);
+      if (!section) return;
+
+      const rowId = `row-${update.stock_symbol}-${update.interval}-${update.start_time}`;
+      let existingRow = document.getElementById(rowId);
+      const tableBody = section.querySelector("tbody");
+
+      if (existingRow) {
+        // Update existing row
+        existingRow.innerHTML = `
+          <td>${update.start_time}</td>
+          <td>${update.open}</td>
+          <td>${update.high}</td>
+          <td>${update.low}</td>
+          <td>${update.close}</td>
+          <td>${update.volume}</td>
+        `;
+        existingRow.classList.add("updated");
+        setTimeout(() => existingRow.classList.remove("updated"), 1000);
+      } else {
+        // Insert new row (latest candle)
+        const newRow = document.createElement("tr");
+        newRow.id = rowId;
+        newRow.innerHTML = `
+          <td>${update.start_time}</td>
+          <td>${update.open}</td>
+          <td>${update.high}</td>
+          <td>${update.low}</td>
+          <td>${update.close}</td>
+          <td>${update.volume}</td>
+        `;
+        newRow.classList.add("updated");
+        tableBody.appendChild(newRow);
+      }
+    }
+
+    document.getElementById("loadBtn").addEventListener("click", fetchHistoricalData);
+  </script>
+</body>
+</html>
