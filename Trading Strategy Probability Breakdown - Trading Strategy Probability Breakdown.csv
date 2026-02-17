@@ -1,0 +1,5 @@
+Strategy Layer,Estimated Win Rate,Logic
+Pure RSI (No filters),40% – 48%,"RSI alone gives many ""fake"" signals in choppy markets."
+RSI + Trend (1-Hr Filter),52% – 58%,"By only trading in the direction of the 1-hour trend, you avoid ""swimming against the tide."""
+RSI + Trend + Volume,62% – 70%,"Adding a 2x Volume requirement removes 80% of fakeouts. This is the ""Sweet Spot"" for NSE."
+RSI + All above + S&R,70% – 75%,Entering only near major Support/Resistance levels (historical data) provides the highest conviction.

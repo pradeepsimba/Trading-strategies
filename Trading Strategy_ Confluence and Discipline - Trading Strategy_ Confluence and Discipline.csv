@@ -1,0 +1,4 @@
+Rule,Action
+Risk-Reward,"Never take a trade where the potential profit is less than 2x your risk (1:2 RR). Even with a 50% win rate, you'll be profitable."
+Timeframe Sync,"If you find a signal on the 15-minute chart, ensure the 1-hour trend is in your favor. Never trade against the higher timeframe."
+"The ""Buffer"" Rule","Don't put your Stop Loss exactly on the Support line. Put it slightly below (e.g., 0.5% below) to avoid ""stop-loss hunting"" by big players."
