@@ -1,0 +1,4 @@
+Check,Tool Used,Requirement
+Trend,Historical API,Is the price above the 200-day Moving Average?
+Momentum,Live WebSocket,Is the 5-min RSI > 60 and rising?
+Conviction,Live WebSocket,Is the current volume > 2x the average volume?
