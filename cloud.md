@@ -1,3 +1,5 @@
+# clone with algo clone in repo csv
+
 manorakshan98p@algo:~/AngelOne_parallel_server$ git branch
 * ws_real_time_data
 
